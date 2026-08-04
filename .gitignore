@@ -1,0 +1,9 @@
+onboard_ws/build/
+onboard_ws/install/
+onboard_ws/log/
+**/__pycache__/
+*.pyc
+*.pyo
+*.user
+*.uvguix.*
+flight_controller/ProjectSTM32F407/build/

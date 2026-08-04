@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>p_to_p_mission</name>
+  <version>0.1.0</version>
+  <description>Configurable A-to-B UAV mission coordinator.</description>
+  <maintainer email="maintainer@example.com">yeyulun16-dot</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>bluesea2</exec_depend>
+  <exec_depend>my_carto_pkg</exec_depend>
+  <exec_depend>laser_array_pkg</exec_depend>
+  <exec_depend>pid_control_pkg</exec_depend>
+  <exec_depend>uart_to_stm32</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
