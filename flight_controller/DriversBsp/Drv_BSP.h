@@ -8,7 +8,7 @@ typedef struct
 {
 	u8 sig_mode; //0==null,1==ppm,2==sbus
 	//
-	s16 ppm_ch[9];
+	s16 ppm_ch[10];
 	//
 	s16 sbus_ch[16];
 	u8 sbus_flag;

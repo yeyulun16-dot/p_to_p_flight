@@ -221,6 +221,9 @@ def verify_safety_contracts() -> None:
     bridge_cpp = ROOT / "onboard_ws" / "src" / "uart_to_stm32" / "src" / "uart_to_stm32.cpp"
     fc_rx = ROOT / "flight_controller" / "FcSrc" / "AnoDTRasp.c"
     fc_loop = ROOT / "flight_controller" / "FcSrc" / "ANO_LX.c"
+    fc_user = ROOT / "flight_controller" / "FcSrc" / "User_Task.c"
+    fc_rc = ROOT / "flight_controller" / "DriversBsp" / "Drv_BSP.c"
+    fc_rc_header = ROOT / "flight_controller" / "DriversBsp" / "Drv_BSP.h"
     keil = ROOT / "flight_controller" / "ProjectSTM32F407" / "ANO_LX_STM32F407.uvprojx"
 
     mission_text = mission_py.read_text(encoding="utf-8")
@@ -258,6 +261,13 @@ def verify_safety_contracts() -> None:
         "Set_m_speed(0, 0, 0, 0)",
     ])
     require_markers(fc_loop, ["AnoDTRaspRunTask1Ms();"])
+    require_markers(fc_rc, ["//DrvRcPpmInit();\n\tDrvRcSbusInit();"])
+    require_markers(fc_rc_header, ["s16 ppm_ch[10];"])
+    require_markers(fc_user, [
+        "ch6_low_seen",
+        "manual_start_active",
+        "Con_flag || manual_start_active",
+    ])
     require("..\\FcSrc\\AnoDTRasp.c" in keil.read_text(encoding="utf-8"),
             "Keil project does not reference patched AnoDTRasp.c")
     print("SAFETY_CONTRACTS_OK layers=mission,pid,bridge,stm32")

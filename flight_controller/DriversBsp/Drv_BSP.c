@@ -57,9 +57,10 @@ u8 All_Init()
 _rc_input_st rc_in;
 void DrvRcInputInit(void)
 {
-	//任意初始化一个模式
-	DrvRcPpmInit();
-	//DrvRcSbusInit();
+	//该机型接收机固定使用 SBUS；与已验证的 26-flight-controller 配置保持一致。
+	//失联时 rcSignalCheck() 仍可回退轮询 PPM，便于排查或临时替换接收机。
+	//DrvRcPpmInit();
+	DrvRcSbusInit();
 
 	//先标记位丢失
 	rc_in.no_signal = 1;

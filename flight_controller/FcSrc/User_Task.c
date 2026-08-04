@@ -69,6 +69,8 @@ void UserTask_OneKeyCmd(void)
     //////////////////////////////////////////////////////////////////////
     //用静态变量记录一键起飞/降落指令已经执行。
     static u8 one_key_down_f = 1,one_key_land_f = 1,one_key_mission_f=0,mission_step;
+    static u8 ch6_low_seen = 0;
+    static u8 manual_start_active = 0;
     LCD_show_step_cun(mission_step);
     //判断有遥控信号才执行
     if (rc_in.no_signal == 0)
@@ -77,9 +79,15 @@ void UserTask_OneKeyCmd(void)
         if(rc_in.rc_ch.st_data.ch_[ch_6_aux2]>1700 && rc_in.rc_ch.st_data.ch_[ch_6_aux2]<2200)
         {
 //            Duoji_Set(1);//600-1000-1400-1800
-            //还没有执行
-            if(takeoff_ready)
+            //兼容原机遥控启动：上电后必须先确认一次 CH6 低位，再拨到高位。
+            //新版上位机已发送 0x67 enable 时仍按任务门控流程启动。
+            if(takeoff_ready || manual_start_active || ch6_low_seen)
             {
+                if(!takeoff_ready && ch6_low_seen)
+                {
+                    manual_start_active = 1;
+                }
+                ch6_low_seen = 0;
                 if(one_key_mission_f ==0)
                 {
                     //标记已经执行
@@ -99,6 +107,7 @@ void UserTask_OneKeyCmd(void)
         {
             //复位标记，以便再次执行
             one_key_mission_f = 0;
+            manual_start_active = 0;
         }
         if(one_key_mission_f==1)
         {
@@ -116,7 +125,7 @@ void UserTask_OneKeyCmd(void)
                 case 1:
                 {
                     my_fly_flag=1;
-                    if(Con_flag)
+                    if(Con_flag || manual_start_active)
                     {
                         mission_step += LX_Change_Mode(2);
                     }
@@ -209,6 +218,8 @@ void UserTask_OneKeyCmd(void)
         {
             //还没有执行
             takeoff_if=0;
+            ch6_low_seen = 1;
+            manual_start_active = 0;
 
             if (one_key_down_f == 0)
             {
@@ -224,6 +235,15 @@ void UserTask_OneKeyCmd(void)
             one_key_land_f = 0;
             one_key_down_f = 0;
         }
-	}
+    }
+    else
+    {
+        //遥控失联后禁止自动续启；信号恢复时必须重新经过 CH6 低位。
+        one_key_mission_f = 0;
+        mission_step = 0;
+        manual_start_active = 0;
+        ch6_low_seen = 0;
+        takeoff_if = 0;
+    }
     ////////////////////////////////////////////////////////////////////////
 }

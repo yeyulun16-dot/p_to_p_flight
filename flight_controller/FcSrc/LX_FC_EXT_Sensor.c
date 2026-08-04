@@ -22,7 +22,7 @@
 _fc_ext_sensor_st ext_sens;
 
 s16 speed_x_t=0,speed_y_t=0,speed_z_t=0,speed_cnt_t=0;
-u8 source_speed=0;//实时速度来源标志位，0为激光雷达，1为光流
+u8 source_speed=1;//实时速度来源标志位，0为激光雷达，1为光流
 char speed_sta_t=0;
 
 /*     MY                            */
