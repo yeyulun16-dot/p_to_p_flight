@@ -55,7 +55,7 @@ class PointToPointMission(Node):
         self.map_frame = self.declare_parameter("map_frame", "map").value
         self.body_frame = self.declare_parameter("body_frame", "laser_link").value
         self.height_topic = self.declare_parameter(
-            "height_topic", "/laser_array/ground_height"
+            "height_topic", "/height"
         ).value
         self.target_mode = self.declare_parameter("target_mode", "relative_body").value
         self.b_offset_x_cm = float(self.declare_parameter("b_offset_x_cm", 250.0).value)

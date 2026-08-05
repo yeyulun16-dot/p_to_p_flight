@@ -23,7 +23,7 @@ p_to_p_flight/
 │       ├── serial_comm/        # 0xAA 0xFF 协议收发
 │       ├── my_carto_pkg/       # Cartographer 定位
 │       ├── bluesea2/           # 平面激光雷达
-│       └── laser_array_pkg/    # 面阵激光测高/下方障碍检测
+│       └── laser_array_pkg/    # 可选面阵激光驱动（当前主启动不使用）
 ├── flight_controller/          # STM32F407 Keil 工程
 ├── scripts/                    # 构建、启动、任务操作脚本
 ├── docs/                       # 硬件适配、协议和试飞检查表
@@ -34,7 +34,7 @@ p_to_p_flight/
 
 ```text
 平面雷达 → Cartographer → map→laser_link 位姿
-面阵激光 ─────────────────→ /laser_array/ground_height
+光流测距 → 飞控 → UART6 ───────→ /height
                                   ↓
 p_to_p_mission → /target_position → position_pid_controller
                                            ↓ /target_velocity（map系）
@@ -66,7 +66,7 @@ p_to_p_mission → /target_position → position_pid_controller
 | Orange Pi 系统 | Ubuntu 22.04 + ROS 2 Humble | 部署环境 |
 | 飞控 | STM32F407 | `flight_controller/ProjectSTM32F407` |
 | 飞控串口 | `/dev/ttyS6`, 921600 8N1 | `p_to_p.yaml` |
-| 面阵激光串口 | `/dev/ttyS3`, 921600 | `p_to_p.yaml` |
+| 飞控/光流高度 | UART6 的 `/height`（cm） | `p_to_p.yaml` |
 | 平面雷达 | `/dev/ttyS4`, 921600 | `bluesea2/src/bluesea-ros2/params/uart_lidar.yaml` |
 | 定位坐标 | `map → laser_link` | `p_to_p.yaml`、URDF |
 | 默认 B 点 | 起飞机头前 50 cm、左 50 cm | `b_offset_x/y_cm` |
@@ -148,7 +148,7 @@ cd ~/p_to_p_flight
 ./scripts/run_onboard.sh lidar_params_file:=/绝对路径/uart_lidar.yaml
 ```
 
-3. 确认 `/scan`、`/laser_array/ground_height`、TF 和串口正常：
+3. 确认 `/scan`、`/height`、TF 和串口正常；必须抬高机体确认 `/height` 随实际高度变化：
 
 ```bash
 ./scripts/preflight_check.sh
@@ -200,5 +200,5 @@ ros2 topic echo /p_to_p/state
 - 不包含自动锁桨；这是有意保留的人工安全动作。
 - `land` 是坐标/测高下降，不是视觉精准降落。
 - Cartographer 原点与机体安装外参必须现场标定。
-- 面阵激光若照到高台，测得的是相对下方表面的高度；其滤波参数需要按场地调整。
+- 当前没有独立面阵激光；高度依赖光流模块测距经飞控回传的 `/height`。若该值为 0、冻结或方向错误，不得启动任务。
 - 原工程中的机械臂、视觉识别、撒药、盘点等题目功能没有加入本精简工程。

@@ -12,7 +12,7 @@
 
 - [ ] 飞控固件编译、下载成功
 - [ ] `/scan` 持续发布
-- [ ] `/laser_array/ground_height` 与实际高度方向一致
+- [ ] `/height` 持续发布，抬高机体时数值随实际高度增加且不会保持为 0
 - [ ] `ros2 run tf2_ros tf2_echo map laser_link` 连续、无跳变
 - [ ] `/target_position` 单位为 cm
 - [ ] `/target_velocity` 静止目标附近收敛到 0

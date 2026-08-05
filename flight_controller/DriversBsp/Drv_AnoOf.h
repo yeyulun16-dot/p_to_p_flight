@@ -33,7 +33,7 @@ typedef struct
 	s16 intergral_x;
 	s16 intergral_y;
 	//
-	u32 of_alt_cm;
+	s32 of_alt_cm;
 	//
 	float quaternion[4];
 	//

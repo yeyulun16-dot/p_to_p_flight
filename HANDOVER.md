@@ -37,7 +37,7 @@ p_to_p_flight/
 │   ├── serial_comm/                AA FF 协议收发
 │   ├── my_carto_pkg/               Cartographer 定位
 │   ├── bluesea2/                   平面雷达驱动
-│   └── laser_array_pkg/            面阵测高与下方障碍检测
+│   └── laser_array_pkg/            可选面阵测高驱动（当前主启动不使用）
 ├── flight_controller/              STM32F407 Keil 工程
 ├── scripts/                        构建、运行、任务和验证脚本
 ├── docs/                           硬件适配与试飞检查
@@ -51,7 +51,7 @@ p_to_p_flight/
 |---|---|
 | Orange Pi → STM32 | `/dev/ttyS6`, 921600 8N1 |
 | BlueSea 平面雷达 | `/dev/ttyS4`, 921600 |
-| 面阵测高雷达 | `/dev/ttyS3`, 921600 |
+| 飞控/光流高度 | UART6 回传 `/height`，单位 cm |
 | 地图/机体 TF | `map → laser_link` |
 | 机体系 | X 前、Y 左、Z 上 |
 | yaw | 逆时针为正，单位 deg |
@@ -148,7 +148,7 @@ python3 scripts/verify_offline.py
 
 - [ ] 在 Ubuntu 22.04 + ROS 2 Humble 上运行 `./scripts/build_onboard.sh` 并保存完整日志。
 - [ ] 用 Keil/ARMCC Rebuild `flight_controller/ProjectSTM32F407/ANO_LX_STM32F407.uvprojx`。
-- [ ] 核对 `/dev/ttyS3`、`/dev/ttyS4`、`/dev/ttyS6` 与实机接线。
+- [ ] 核对 `/dev/ttyS4`、`/dev/ttyS6` 与实机接线，并抬高机体验证 `/height` 实时变化。
 - [ ] 核对电机序号、旋向、PWM、遥控通道、CH6 高低值和急停。
 - [ ] 核对 URDF 中雷达安装方向和 `map → laser_link` yaw 正方向。
 - [ ] 拆桨验证 `0x67`：CH6 低位不得解锁；CH6 高位才进入原解锁流程。
@@ -158,10 +158,10 @@ python3 scripts/verify_offline.py
 ## 11. 已知边界
 
 - 当前没有实机编译和飞行结果，硬件参数仍需现场确认。
-- `land` 是基于坐标与面阵测高的下降，不是视觉精准降落。
+- `land` 是基于坐标与飞控/光流测高的下降，不是视觉精准降落。
 - 不含自动锁桨；落地后必须人工执行原机锁桨流程。
 - Cartographer 在无特征或动态环境中可能漂移，不能跳过现场定位评估。
-- 面阵雷达照到高台时测得的是相对高台表面的距离，滤波参数必须按场地调整。
+- 当前没有独立面阵雷达；`/height` 为 0、冻结或方向错误时不得启动任务。
 - `FAULT_HOLD` 恢复后应显式调用 `abort_hold`，不得假设任务会自动恢复路线。
 
 ## 12. 交接文件完整性
