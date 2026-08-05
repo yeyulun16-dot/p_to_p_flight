@@ -23,7 +23,7 @@ p_to_p_mission:
 
     # hold: 到 B 后持续悬停（首次调试推荐）
     # land: 到 B 后等待 pre_descent_hold_sec，再下降到 landing_height_cm；不会自动锁桨
-    terminal_behavior: hold
+    terminal_behavior: land
     pre_descent_hold_sec: 3.0
 
     position_tolerance_cm: 12.0
