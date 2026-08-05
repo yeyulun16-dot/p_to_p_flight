@@ -16,7 +16,6 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>bluesea2</exec_depend>
   <exec_depend>my_carto_pkg</exec_depend>
-  <exec_depend>laser_array_pkg</exec_depend>
   <exec_depend>pid_control_pkg</exec_depend>
   <exec_depend>uart_to_stm32</exec_depend>
 

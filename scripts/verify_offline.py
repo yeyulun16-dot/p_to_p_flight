@@ -225,6 +225,8 @@ def verify_safety_contracts() -> None:
     fc_rc = ROOT / "flight_controller" / "DriversBsp" / "Drv_BSP.c"
     fc_rc_header = ROOT / "flight_controller" / "DriversBsp" / "Drv_BSP.h"
     keil = ROOT / "flight_controller" / "ProjectSTM32F407" / "ANO_LX_STM32F407.uvprojx"
+    config = MISSION_PACKAGE / "config" / "p_to_p.yaml"
+    mission_launch = MISSION_PACKAGE / "launch" / "p_to_p.launch.py"
 
     mission_text = mission_py.read_text(encoding="utf-8")
     require(mission_text.count("self.route_kick_remaining = 1") == 2,
@@ -270,6 +272,14 @@ def verify_safety_contracts() -> None:
     ])
     require("..\\FcSrc\\AnoDTRasp.c" in keil.read_text(encoding="utf-8"),
             "Keil project does not reference patched AnoDTRasp.c")
+    mission_params = read_ros_parameters(config, "p_to_p_mission")
+    require(mission_params.get("height_topic") == "/height",
+            "Point-to-point mission must use the flight-controller /height topic")
+    launch_text = mission_launch.read_text(encoding="utf-8")
+    require("laser_array_ground_node" not in launch_text,
+            "Main launch must not require an uninstalled laser array")
+    require("/laser_array/ground_height" not in launch_text,
+            "PID height input must not be remapped to the absent laser array")
     print("SAFETY_CONTRACTS_OK layers=mission,pid,bridge,stm32")
 
 

@@ -9,12 +9,11 @@ uart_to_stm32_node:
   ros__parameters:
     serial_port: /dev/ttyS6
     baud_rate: 921600
-
-laser_array_ground_node:
-  ros__parameters:
-    serial_port: /dev/ttyS3
-    baud_rate: 921600
 ```
+
+当前主启动不使用独立面阵激光。光流模块的测距先进入飞控，再由飞控通过
+`/dev/ttyS6` 的 `0x05` 帧回传，`uart_to_stm32_node` 将其发布为 `/height`（cm）。
+拆桨测试时必须抬高机体确认 `/height` 随实际高度变化，持续为 0 时不得试飞。
 
 在 Orange Pi 上执行 `ls -l /dev/ttyS* /dev/ttyUSB* /dev/ttyACM*` 确认设备名。串口用户通常需要属于 `dialout` 组：
 

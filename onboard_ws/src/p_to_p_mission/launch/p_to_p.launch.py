@@ -52,19 +52,11 @@ def generate_launch_description() -> LaunchDescription:
             ),
             mapping_launch,
             Node(
-                package="laser_array_pkg",
-                executable="laser_array_ground_node",
-                name="laser_array_ground_node",
-                output="screen",
-                parameters=[params_file],
-            ),
-            Node(
                 package="pid_control_pkg",
                 executable="position_pid_controller",
                 name="position_pid_controller",
                 output="screen",
                 parameters=[params_file],
-                remappings=[("/height", "/laser_array/ground_height")],
             ),
             Node(
                 package="uart_to_stm32",

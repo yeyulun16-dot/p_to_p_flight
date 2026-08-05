@@ -3,7 +3,8 @@ p_to_p_mission:
     # 坐标系与传感器话题
     map_frame: map
     body_frame: laser_link
-    height_topic: /laser_array/ground_height
+    # 飞控/光流高度由 uart_to_stm32_node 从 /dev/ttyS6 的 0x05 帧发布
+    height_topic: /height
 
     # B 点定义方式：
     # relative_body: 相对起飞瞬间机头坐标，X=前、Y=左（推荐）
@@ -31,7 +32,8 @@ p_to_p_mission:
     reached_stable_sec: 1.0
     sensor_timeout_sec: 0.5
     stop_output_max_height_cm: 25.0
-    abort_descent_on_obstacle: true
+    # 未安装面阵激光，不订阅其下方障碍检测结果
+    abort_descent_on_obstacle: false
     route_choice: 3
     update_rate_hz: 10.0
 
@@ -73,16 +75,3 @@ uart_to_stm32_node:
     # PID 输出是 map 速度；串口桥依据实时 yaw 转成机体系后再发给飞控
     target_velocity_frame: map
     command_timeout_sec: 0.30
-
-laser_array_ground_node:
-  ros__parameters:
-    serial_port: /dev/ttyS3
-    baud_rate: 921600
-    percentile: 1.0
-    cluster_gap: 0.20
-    max_slew_rate: 1.5
-    ema_alpha: 0.6
-    jump_threshold: 0.15
-    max_hold_frames: 20
-    obstacle_margin: 0.20
-    log_period_sec: 0.5

@@ -8,6 +8,7 @@
 
 extern int takeoff_ready;
 extern int Con_flag;
+extern s16 m_speed_z;
 int mission_step_cun=0;
 int TJC_Duoji=0;
 int qr_cun=0;
@@ -362,7 +363,7 @@ void TJC_Send(void)//50ms执行一次，用来发送循环发送的显示项
     if(TJC_cnt%10==3)
     {
 
-        Send_speed(x_t_cun,y_t_cun,z_t_cun,mission_step_cun,0);
+        Send_speed(m_speed_z,takeoff_if,z_t_cun,mission_step_cun,0);
         Send_speed(x_o_cun,y_o_cun,z_o_cun,yaw_o_cun,1);
     }
     
