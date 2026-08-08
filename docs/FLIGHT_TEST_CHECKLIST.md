@@ -14,6 +14,11 @@
 - [ ] `/scan` 持续发布
 - [ ] `/height` 持续发布，抬高机体时数值随实际高度增加且不会保持为 0
 - [ ] `ros2 run tf2_ros tf2_echo map laser_link` 连续、无跳变
+- [ ] `ros2 run tf2_ros tf2_echo odom laser_link` 连续、时间戳更新且无跳变
+- [ ] 拆桨手动前后移动时 `/lidar_velocity_body[0]` 正负方向对应 X 前后
+- [ ] 拆桨手动左右移动时 `/lidar_velocity_body[1]` 正负方向对应 Y 左右
+- [ ] 静止时 `/lidar_velocity_body` 回到接近 0，且没有持续尖峰
+- [ ] 停止 Cartographer/雷达后 0.30 秒左右飞控速度接入指示熄灭
 - [ ] `/target_position` 单位为 cm
 - [ ] `/target_velocity` 静止目标附近收敛到 0
 - [ ] 机体转动后，map→body 速度转换方向正确
@@ -48,8 +53,9 @@
 
 ## 4. 下降测试
 
-- [ ] `landing_height_cm` 对应实际可安全接地的传感器读数
+- [ ] `landing_height_cm` 对应飞控原生一键降落可安全接管的近地传感器读数
 - [ ] 下方障碍检测工作，障碍触发后恢复到巡航高度
-- [ ] 到近地高度后调用 `stop_output`，再人工锁桨
+- [ ] 到近地交接高度后状态进入 `FC_LANDING`，STM32 确实触发 `OneKey_Land()`
+- [ ] 飞控继续下降到地面；人工确认接地和锁桨状态，不得仅凭状态名判断
 - [ ] 断开/冻结测高或定位时，`stop_output` 会拒绝执行
-- [ ] 明确记录：当前版本没有视觉精准降落和自动锁桨
+- [ ] 明确记录：当前版本没有视觉精准降落，上位机不直接执行锁桨

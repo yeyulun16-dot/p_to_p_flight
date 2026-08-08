@@ -17,12 +17,13 @@ p_to_p_mission:
     b_y_cm: -250.0
 
     cruise_height_cm: 60.0
+    # 外部位置环下降到此近地高度后，交给飞控原生一键降落继续接地
     landing_height_cm: 13.0
     keep_takeoff_yaw: true
     target_yaw_deg: 0.0
 
     # hold: 到 B 后持续悬停（首次调试推荐）
-    # land: 到 B 后等待 pre_descent_hold_sec，再下降到 landing_height_cm；不会自动锁桨
+    # land: 到 B 后等待 pre_descent_hold_sec，下降到交接高度，再由飞控持续降到地面
     terminal_behavior: land
     pre_descent_hold_sec: 3.0
 
@@ -75,3 +76,13 @@ uart_to_stm32_node:
     # PID 输出是 map 速度；串口桥依据实时 yaw 转成机体系后再发给飞控
     target_velocity_frame: map
     command_timeout_sec: 0.30
+    # 使用 Cartographer 连续局部位姿估算机体系实测速度，并通过 0x32 送入飞控。
+    # odom 是不受全局回环修正跳变影响的局部 SLAM 坐标系。
+    lidar_velocity_enabled: true
+    lidar_velocity_frame: odom
+    lidar_velocity_filter_alpha: 0.35
+    lidar_velocity_min_dt_sec: 0.02
+    lidar_velocity_max_dt_sec: 0.30
+    lidar_velocity_pose_timeout_sec: 0.25
+    # STM32 旧接口只接受绝对值严格小于 60 cm/s。
+    lidar_velocity_max_cmps: 55.0

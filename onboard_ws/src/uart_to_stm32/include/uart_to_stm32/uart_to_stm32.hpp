@@ -2,6 +2,7 @@
 #define UART_TO_STM32__UART_TO_STM32_HPP_
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -33,12 +34,17 @@ public:
 private:
   void lookupTransform();
   void processTfTransform(const geometry_msgs::msg::TransformStamped & transform);
+  void updateLidarVelocity();
+  void processLidarVelocityTransform(
+    const geometry_msgs::msg::TransformStamped & transform);
+  void resetLidarVelocityEstimator();
   void routeChoiceCallback(const std_msgs::msg::UInt8::SharedPtr msg);
   void targetVelocityCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
   void checkTargetVelocityTimeout();
   void sendZeroTargetVelocity();
   Eigen::Vector3d transformVelocity(const Eigen::Vector3d & linear, double yaw);
   void sendTargetVelocityToSerial(float vx_cm_per_s, float vy_cm_per_s, float vz_cm_per_s, float vyaw_deg_per_s);
+  bool sendLidarVelocityToSerial(float vx_cm_per_s, float vy_cm_per_s);
   bool sendMissionControlToSerial(bool enable);
   void sendMissionCompleteToSerial();
   void missionCompleteCallback(const std_msgs::msg::Empty::SharedPtr msg);
@@ -55,6 +61,13 @@ private:
   int baud_rate_;
   std::string target_velocity_frame_;
   double command_timeout_sec_;
+  bool lidar_velocity_enabled_;
+  std::string lidar_velocity_frame_;
+  double lidar_velocity_filter_alpha_;
+  double lidar_velocity_min_dt_sec_;
+  double lidar_velocity_max_dt_sec_;
+  double lidar_velocity_pose_timeout_sec_;
+  double lidar_velocity_max_cmps_;
 
   rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr route_choice_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr target_velocity_sub_;
@@ -65,6 +78,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Int16>::SharedPtr height_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr is_st_ready_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr mission_step_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr lidar_velocity_pub_;
 
   double current_yaw_;
   bool yaw_valid_;
@@ -72,8 +86,16 @@ private:
   bool has_st_ready_pub_;
   bool command_timeout_latched_;
   std::chrono::steady_clock::time_point last_target_velocity_time_;
+  bool has_last_lidar_pose_;
+  bool has_filtered_lidar_velocity_;
+  int64_t last_lidar_pose_stamp_ns_;
+  double last_lidar_x_m_;
+  double last_lidar_y_m_;
+  double filtered_lidar_vx_cmps_;
+  double filtered_lidar_vy_cmps_;
 
   static constexpr uint8_t TARGET_VELOCITY_FRAME_ID = 0x31;
+  static constexpr uint8_t LIDAR_VELOCITY_FRAME_ID = 0x32;
   static constexpr uint8_t ST_READY_QUERY_ID = 0xF1;
   static constexpr uint8_t MISSION_COMPLETE_FRAME_ID = 0x66;
   static constexpr uint8_t MISSION_COMPLETE_VALUE = 0x06;

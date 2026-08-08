@@ -6,6 +6,8 @@
 #include "LX_FC_EXT_Sensor.h"
 #include "User_Task.h"
 #include "ANO_LX.h"
+#include "LX_FC_Fun.h"
+#include "LX_FC_State.h"
 #include "TJC_lcd.h"
 
 static void anoDTRaspDataFrameAnl(void);
@@ -34,11 +36,33 @@ ROS_DATA_ST rosData;//接受数据结构体
 static u16 ros_velocity_age_ms = 0U;
 static u8 ros_velocity_seen = 0U;
 static u8 ros_velocity_timeout_latched = 0U;
+/*
+ * 0x66 hands the final descent to the flight controller's native land mode.
+ * OneKey_Land() can temporarily reject a command while another command waits
+ * for acknowledgement, so keep retrying from the 1 ms task until accepted.
+ */
+static u8 one_key_land_pending = 0U;
+static u8 one_key_land_sent = 0U;
 
 //
 void AnoDTRaspRunTask1Ms(void)
 {
     static u16 tmp_cnt[2];
+
+    if (one_key_land_pending && !one_key_land_sent)
+    {
+        if (fc_sta.unlock_sta == 0U)
+        {
+            /* Already on the ground/locked: nothing more needs to be sent. */
+            one_key_land_pending = 0U;
+            one_key_land_sent = 1U;
+        }
+        else if (OneKey_Land())
+        {
+            one_key_land_pending = 0U;
+            one_key_land_sent = 1U;
+        }
+    }
 
     if (ros_velocity_seen && !ros_velocity_timeout_latched)
     {
@@ -202,7 +226,7 @@ static void anoDTRaspDataFrameAnl(void)
 
         }
         break;
-        case 0x66://任务结束/停止输出帧，data[0] == 0x06
+        case 0x66://任务结束/停止外部输出并触发飞控一键降落，data[0] == 0x06
         {
             if ((rxFrame.frame.dataLen >= 1U) && (rxFrame.frame.dataBuf[0] == 0x06U))
             {
@@ -213,6 +237,10 @@ static void anoDTRaspDataFrameAnl(void)
                 ros_velocity_age_ms = ROS_VELOCITY_TIMEOUT_MS;
                 ros_velocity_seen = 1U;
                 ros_velocity_timeout_latched = 1U;
+                if (!one_key_land_sent)
+                {
+                    one_key_land_pending = 1U;
+                }
             }
         }
         break;
@@ -222,6 +250,9 @@ static void anoDTRaspDataFrameAnl(void)
             {
                 if (rxFrame.frame.dataBuf[0] == 0x01U)
                 {
+                    /* A new mission may request one native landing again. */
+                    one_key_land_pending = 0U;
+                    one_key_land_sent = 0U;
                     /* 仅准备外部任务；仍需遥控器 CH6 高位才会切模式并解锁。 */
                     Con_flag = 1;
                     takeoff_ready = 1;
@@ -237,18 +268,21 @@ static void anoDTRaspDataFrameAnl(void)
         }
         break;
         case 0x32://位置与速度，t(原来指t265)
-        {			
-            
-            rosData.tacc[0] = (s16)*((s16*)(rxFrame.frame.dataBuf + 0));
-            rosData.tacc[1] = (s16)*((s16*)(rxFrame.frame.dataBuf + 2));
-            rosData.tacc[2] = (s16)*((s16*)(rxFrame.frame.dataBuf + 4));
-            
-            rosData.tloc[0] = (s16)*((s16*)(rxFrame.frame.dataBuf + 6));
-            rosData.tloc[1] = (s16)*((s16*)(rxFrame.frame.dataBuf + 8));
-            rosData.tloc[2] = (s16)*((s16*)(rxFrame.frame.dataBuf + 10));
-            
-            Set_m_speed_now(rosData.tloc[0],rosData.tloc[1],rosData.tloc[2]);
-            Send_speed_cun(rosData.tloc[0],rosData.tloc[1],rosData.tloc[2],0,0);
+		{
+            if (rxFrame.frame.dataLen >= 12U)
+            {
+                rosData.tacc[0] = (s16)*((s16*)(rxFrame.frame.dataBuf + 0));
+                rosData.tacc[1] = (s16)*((s16*)(rxFrame.frame.dataBuf + 2));
+                rosData.tacc[2] = (s16)*((s16*)(rxFrame.frame.dataBuf + 4));
+
+                /* 兼容旧 0x32 布局：后 6 字节现在承载机体系雷达实测速度。 */
+                rosData.tloc[0] = (s16)*((s16*)(rxFrame.frame.dataBuf + 6));
+                rosData.tloc[1] = (s16)*((s16*)(rxFrame.frame.dataBuf + 8));
+                rosData.tloc[2] = (s16)*((s16*)(rxFrame.frame.dataBuf + 10));
+
+                Set_m_speed_now(rosData.tloc[0],rosData.tloc[1],rosData.tloc[2]);
+                Send_speed_cun(rosData.tloc[0],rosData.tloc[1],rosData.tloc[2],0,0);
+            }
         }
         break;
         case 0x33://激光雷达位置坐标
