@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import math
 import re
+import struct
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -209,6 +210,27 @@ def verify_simulation(config_path: Path) -> None:
     )
 
 
+def verify_lidar_velocity_math() -> None:
+    dt = 0.10
+    local_vx = (0.03 - 0.00) * 100.0 / dt
+    local_vy = (-0.04 - 0.00) * 100.0 / dt
+    require(math.isclose(math.hypot(local_vx, local_vy), 50.0),
+            "Lidar pose differencing has incorrect cm/s scaling")
+
+    body_vx, body_vy = map_to_body(local_vx, local_vy, 90.0)
+    require(math.isclose(body_vx, -40.0, abs_tol=1e-9),
+            "Lidar velocity X rotation mismatch")
+    require(math.isclose(body_vy, -30.0, abs_tol=1e-9),
+            "Lidar velocity Y rotation mismatch")
+
+    payload = bytearray(12)
+    struct.pack_into("<hhh", payload, 6, round(body_vx), round(body_vy), 0)
+    require(payload[:6] == bytes(6), "Legacy 0x32 reserved bytes must remain zero")
+    require(struct.unpack_from("<hhh", payload, 6) == (-40, -30, 0),
+            "Legacy 0x32 measured-velocity payload mismatch")
+    print("LIDAR_VELOCITY_MATH_OK speed=50.0cm/s frame=0x32")
+
+
 def require_markers(path: Path, markers) -> None:
     text = path.read_text(encoding="utf-8", errors="ignore")
     for marker in markers:
@@ -219,7 +241,9 @@ def verify_safety_contracts() -> None:
     mission_py = ROOT / "onboard_ws" / "src" / "p_to_p_mission" / "p_to_p_mission" / "mission_node.py"
     pid_cpp = ROOT / "onboard_ws" / "src" / "pid_control_pkg" / "src" / "pid_controller.cpp"
     bridge_cpp = ROOT / "onboard_ws" / "src" / "uart_to_stm32" / "src" / "uart_to_stm32.cpp"
+    bridge_hpp = ROOT / "onboard_ws" / "src" / "uart_to_stm32" / "include" / "uart_to_stm32" / "uart_to_stm32.hpp"
     fc_rx = ROOT / "flight_controller" / "FcSrc" / "AnoDTRasp.c"
+    fc_sensor = ROOT / "flight_controller" / "FcSrc" / "LX_FC_EXT_Sensor.c"
     fc_loop = ROOT / "flight_controller" / "FcSrc" / "ANO_LX.c"
     fc_user = ROOT / "flight_controller" / "FcSrc" / "User_Task.c"
     fc_rc = ROOT / "flight_controller" / "DriversBsp" / "Drv_BSP.c"
@@ -234,6 +258,11 @@ def verify_safety_contracts() -> None:
     require("self.route_kick_remaining = 20" not in mission_text and
             "self.route_kick_remaining = 10" not in mission_text,
             "Repeated route enable could defeat the command watchdog")
+    require_markers(mission_py, [
+        '"FC_LANDING"',
+        "self.mission_complete_pub.publish(Empty())",
+        "self.active_target = None",
+    ])
     require_markers(pid_cpp, [
         "pid_z_.setOutputLimits(max_vertical_vel_, -max_vertical_vel_)",
         "hasFreshHeightData(now_time)",
@@ -245,7 +274,14 @@ def verify_safety_contracts() -> None:
         '"/route_choice", rclcpp::QoS(1).reliable()',
         "command_timeout_latched_ = true",
         "route_task_active_ = false",
+        '"/lidar_velocity_body"',
+        "processLidarVelocityTransform(transform)",
+        "sendLidarVelocityToSerial(body_vx_cmps, body_vy_cmps)",
+        "std::vector<uint8_t> data(12, 0U)",
+        "writeInt16LittleEndian(data, 6, vel_x)",
+        "writeInt16LittleEndian(data, 8, vel_y)",
     ])
+    require_markers(bridge_hpp, ["LIDAR_VELOCITY_FRAME_ID = 0x32"])
     bridge_text = bridge_cpp.read_text(encoding="utf-8")
     require('"/velocity_map"' not in bridge_text,
             "Legacy /velocity_map path bypasses point-to-point task gating")
@@ -259,8 +295,20 @@ def verify_safety_contracts() -> None:
         "case 0x31",
         "case 0x66",
         "case 0x67",
+        "one_key_land_pending",
+        "OneKey_Land()",
         "takeoff_ready = 1",
         "Set_m_speed(0, 0, 0, 0)",
+        "case 0x32",
+        "rxFrame.frame.dataLen >= 12U",
+        "Set_m_speed_now(rosData.tloc[0],rosData.tloc[1],rosData.tloc[2])",
+    ])
+    require_markers(fc_sensor, [
+        "source_speed=0",
+        "EXTERNAL_VELOCITY_TIMEOUT_MS 300U",
+        "external_velocity_timeout_latched=1",
+        "last_external_update_cnt",
+        "ext_sens.gen_vel.st_data.hca_velocity_cmps[2] = 0x8000",
     ])
     require_markers(fc_loop, ["AnoDTRaspRunTask1Ms();"])
     require_markers(fc_rc, ["//DrvRcPpmInit();\n\tDrvRcSbusInit();"])
@@ -275,6 +323,15 @@ def verify_safety_contracts() -> None:
     mission_params = read_ros_parameters(config, "p_to_p_mission")
     require(mission_params.get("height_topic") == "/height",
             "Point-to-point mission must use the flight-controller /height topic")
+    bridge_params = read_ros_parameters(config, "uart_to_stm32_node")
+    require(bridge_params.get("lidar_velocity_enabled") is True,
+            "Lidar measured velocity forwarding must be explicitly enabled")
+    require(bridge_params.get("lidar_velocity_frame") == "odom",
+            "Lidar velocity must use the continuous local odom frame")
+    require(0.0 < float(bridge_params["lidar_velocity_filter_alpha"]) <= 1.0,
+            "Lidar velocity filter alpha must be in (0, 1]")
+    require(float(bridge_params["lidar_velocity_max_cmps"]) < 60.0,
+            "Lidar velocity must stay within the STM32 legacy input range")
     launch_text = mission_launch.read_text(encoding="utf-8")
     require("laser_array_ground_node" not in launch_text,
             "Main launch must not require an uninstalled laser array")
@@ -306,6 +363,7 @@ def main() -> int:
         config = MISSION_PACKAGE / "config" / "p_to_p.yaml"
         verify_project_structure()
         verify_safety_contracts()
+        verify_lidar_velocity_math()
         verify_simulation(config)
     except Exception as exc:  # noqa: BLE001 - command-line verifier reports the contract failure
         print(f"VERIFY_FAILED: {exc}", file=sys.stderr)

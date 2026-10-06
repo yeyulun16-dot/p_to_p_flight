@@ -9,7 +9,7 @@ echo "== Serial devices =="
 ls -l /dev/ttyS6 /dev/ttyS4 2>/dev/null || true
 
 echo "== Required topics =="
-for topic in /scan /height /target_position /target_velocity /p_to_p/state; do
+for topic in /scan /height /lidar_velocity_body /target_position /target_velocity /p_to_p/state; do
   if ros2 topic list | grep -Fxq "${topic}"; then
     echo "OK  ${topic}"
   else
@@ -22,5 +22,11 @@ timeout 3 ros2 topic echo --once /height || true
 
 echo "== One map->laser_link transform =="
 timeout 3 ros2 run tf2_ros tf2_echo map laser_link || true
+
+echo "== One odom->laser_link transform =="
+timeout 3 ros2 run tf2_ros tf2_echo odom laser_link || true
+
+echo "== Lidar body velocity while moving the propeller-off aircraft by hand =="
+timeout 5 ros2 topic echo --once /lidar_velocity_body || true
 
 echo "Review all MISS/timeouts before arming. This script does not authorize flight."

@@ -97,12 +97,13 @@ chmod +x scripts/*.sh
 | `/p_to_p/state` | 当前任务状态 |
 | `/target_position` | `[x_cm, y_cm, z_cm, yaw_deg]` |
 | `/target_velocity` | 地图系 `[vx, vy, vz, yaw_rate]` |
+| `/lidar_velocity_body` | Cartographer 局部位姿估算的机体系 `[vx, vy, 0]`，仅用于实测速度反馈 |
 
 状态主流程：
 
 ```text
 IDLE → TAKEOFF → GOTO_B → HOLD_B
-                           └→ DESCEND_B → LANDED_HOLD
+                           └→ DESCEND_B → FC_LANDING
 ```
 
 故障状态包括 `ABORT_HOLD`、`FAULT_HOLD` 和 `OBSTACLE_HOLD`。
@@ -111,18 +112,20 @@ IDLE → TAKEOFF → GOTO_B → HOLD_B
 
 ```text
 0x31 + 8B  机体系 vx/vy/vz/yaw_rate，四个 int16 小端
-0x66 0x06  任务结束/速度归零
+0x32 + 12B  前 6B 保留，后 6B 为机体系雷达实测 vx/vy/0，三个 int16 小端
+0x66 0x06  任务结束/速度归零，并由 STM32 可靠触发飞控一键降落
 0x67 0x01  上位机任务准备；仍需 CH6 高位人工授权
 0x67 0x00  撤销任务使能并归零，不自动锁桨
 ```
 
-已删除上位机中的旧 `/velocity_map → 0x32` 旁路、飞控未处理的 `0x07` 测高转发，以及机械臂、磁铁、声光题目接口。运动指令只允许走受任务门控和看门狗保护的 `/target_velocity → 0x31` 链路。
+已删除旧 `/velocity_map` 控制旁路；当前 `0x32` 仅传输由 `odom → laser_link` 连续位姿估算出的实测速度，不承载目标或运动指令。运动指令仍只允许走受任务门控和看门狗保护的 `/target_velocity → 0x31` 链路。
 
 ## 8. 安全改动
 
 - PID 检查测高和动态 TF 时间戳；超时先发布一次零速度，再停止刷新。
 - 上位机 0.30 s 收不到新速度时，发送三次零速度、撤销 `0x67` 任务使能并关闭转发。
 - STM32 300 ms 收不到 `0x31` 时执行 `Set_m_speed(0,0,0,0)`。
+- STM32 300 ms 收不到新的 `0x32` 雷达实测速度时，将通用速度测量 XYZ 标记为无效。
 - 垂直速度正负方向统一受 `max_vertical_velocity` 对称限幅。
 - `/p_to_p/stop_output` 会拒绝过期数据、负高度或高于安全阈值的情况。
 - 到 B 默认继续闭环悬停，不自动切断控制，也不自动锁桨。
@@ -158,8 +161,8 @@ python3 scripts/verify_offline.py
 ## 11. 已知边界
 
 - 当前没有实机编译和飞行结果，硬件参数仍需现场确认。
-- `land` 是基于坐标与飞控/光流测高的下降，不是视觉精准降落。
-- 不含自动锁桨；落地后必须人工执行原机锁桨流程。
+- `land` 先基于坐标与飞控/光流测高下降到近地交接高度，再触发飞控原生一键降落，不是视觉精准降落。
+- 上位机不直接锁桨；必须人工确认飞控一键降落已经接地并进入安全锁桨状态。
 - Cartographer 在无特征或动态环境中可能漂移，不能跳过现场定位评估。
 - 当前没有独立面阵雷达；`/height` 为 0、冻结或方向错误时不得启动任务。
 - `FAULT_HOLD` 恢复后应显式调用 `abort_hold`，不得假设任务会自动恢复路线。

@@ -20,6 +20,14 @@ bool isSupportedRouteChoice(uint8_t route_id)
 {
   return route_id == 1 || route_id == 2 || route_id == 3;
 }
+
+void writeInt16LittleEndian(
+  std::vector<uint8_t> & data, std::size_t offset, int16_t value)
+{
+  const uint16_t raw = static_cast<uint16_t>(value);
+  data[offset] = static_cast<uint8_t>(raw & 0xFFU);
+  data[offset + 1] = static_cast<uint8_t>((raw >> 8U) & 0xFFU);
+}
 }  // namespace
 
 UartToStm32::UartToStm32(rclcpp::Node::SharedPtr node)
@@ -30,7 +38,14 @@ UartToStm32::UartToStm32(rclcpp::Node::SharedPtr node)
   route_task_active_(false),
   has_st_ready_pub_(false),
   command_timeout_latched_(false),
-  last_target_velocity_time_(std::chrono::steady_clock::now())
+  last_target_velocity_time_(std::chrono::steady_clock::now()),
+  has_last_lidar_pose_(false),
+  has_filtered_lidar_velocity_(false),
+  last_lidar_pose_stamp_ns_(0),
+  last_lidar_x_m_(0.0),
+  last_lidar_y_m_(0.0),
+  filtered_lidar_vx_cmps_(0.0),
+  filtered_lidar_vy_cmps_(0.0)
 {
   RCLCPP_INFO(node_->get_logger(), "UartToStm32 created");
 }
@@ -61,7 +76,25 @@ bool UartToStm32::initialize(double update_rate, const std::string & source_fram
     target_velocity_frame_ =
       node_->declare_parameter<std::string>("target_velocity_frame", "map");
     command_timeout_sec_ = node_->declare_parameter<double>("command_timeout_sec", 0.30);
+    lidar_velocity_enabled_ =
+      node_->declare_parameter<bool>("lidar_velocity_enabled", true);
+    lidar_velocity_frame_ =
+      node_->declare_parameter<std::string>("lidar_velocity_frame", "odom");
+    lidar_velocity_filter_alpha_ =
+      node_->declare_parameter<double>("lidar_velocity_filter_alpha", 0.35);
+    lidar_velocity_min_dt_sec_ =
+      node_->declare_parameter<double>("lidar_velocity_min_dt_sec", 0.02);
+    lidar_velocity_max_dt_sec_ =
+      node_->declare_parameter<double>("lidar_velocity_max_dt_sec", 0.30);
+    lidar_velocity_pose_timeout_sec_ =
+      node_->declare_parameter<double>("lidar_velocity_pose_timeout_sec", 0.25);
+    lidar_velocity_max_cmps_ =
+      node_->declare_parameter<double>("lidar_velocity_max_cmps", 55.0);
 
+    if (update_rate_ <= 0.0) {
+      RCLCPP_ERROR(node_->get_logger(), "update_rate must be positive");
+      return false;
+    }
     if (target_velocity_frame_ != "map" && target_velocity_frame_ != "body") {
       RCLCPP_ERROR(
         node_->get_logger(),
@@ -71,6 +104,30 @@ bool UartToStm32::initialize(double update_rate, const std::string & source_fram
     }
     if (command_timeout_sec_ <= 0.0) {
       RCLCPP_ERROR(node_->get_logger(), "command_timeout_sec must be positive");
+      return false;
+    }
+    if (lidar_velocity_frame_.empty()) {
+      RCLCPP_ERROR(node_->get_logger(), "lidar_velocity_frame must not be empty");
+      return false;
+    }
+    if (lidar_velocity_filter_alpha_ <= 0.0 || lidar_velocity_filter_alpha_ > 1.0) {
+      RCLCPP_ERROR(node_->get_logger(), "lidar_velocity_filter_alpha must be in (0, 1]");
+      return false;
+    }
+    if (lidar_velocity_min_dt_sec_ <= 0.0 ||
+      lidar_velocity_max_dt_sec_ <= lidar_velocity_min_dt_sec_)
+    {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "lidar velocity dt limits must satisfy 0 < min_dt < max_dt");
+      return false;
+    }
+    if (lidar_velocity_pose_timeout_sec_ <= 0.0 || lidar_velocity_max_cmps_ <= 0.0 ||
+      lidar_velocity_max_cmps_ >= 60.0)
+    {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "lidar velocity timeout/max must be positive and max must be below 60 cm/s");
       return false;
     }
 
@@ -91,6 +148,14 @@ bool UartToStm32::initialize(double update_rate, const std::string & source_fram
       node_->get_logger(),
       "Serial port %s initialized at %d baudrate; target velocity frame=%s timeout=%.2fs",
       serial_port_.c_str(), baud_rate_, target_velocity_frame_.c_str(), command_timeout_sec_);
+    RCLCPP_INFO(
+      node_->get_logger(),
+      "Lidar measured velocity %s: %s->%s alpha=%.2f dt=[%.3f, %.3f]s timeout=%.2fs max=%.1fcm/s",
+      lidar_velocity_enabled_ ? "enabled" : "disabled",
+      lidar_velocity_frame_.c_str(), target_frame_.c_str(),
+      lidar_velocity_filter_alpha_, lidar_velocity_min_dt_sec_,
+      lidar_velocity_max_dt_sec_, lidar_velocity_pose_timeout_sec_,
+      lidar_velocity_max_cmps_);
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(node_->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -116,6 +181,8 @@ bool UartToStm32::initialize(double update_rate, const std::string & source_fram
     is_st_ready_pub_ =
       node_->create_publisher<std_msgs::msg::UInt8>("/is_st_ready", rclcpp::QoS(10).transient_local());
     mission_step_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("/mission_step", 10);
+    lidar_velocity_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>(
+      "/lidar_velocity_body", 10);
 
     has_st_ready_pub_ = false;
 
@@ -146,6 +213,9 @@ void UartToStm32::lookupTransform()
   } catch (const tf2::TransformException & ex) {
     RCLCPP_DEBUG(node_->get_logger(), "Transform lookup failed: %s", ex.what());
   }
+  if (lidar_velocity_enabled_) {
+    updateLidarVelocity();
+  }
   checkTargetVelocityTimeout();
 }
 
@@ -173,6 +243,146 @@ void UartToStm32::processTfTransform(const geometry_msgs::msg::TransformStamped 
     "Transform %s -> %s: pos(%.3f, %.3f, %.3f) rot(%.3f, %.3f, %.3f)",
     source_frame_.c_str(), target_frame_.c_str(), x, y, z, roll, pitch, yaw);
 
+}
+
+void UartToStm32::updateLidarVelocity()
+{
+  try {
+    const auto transform = tf_buffer_->lookupTransform(
+      lidar_velocity_frame_, target_frame_, tf2::TimePointZero);
+    processLidarVelocityTransform(transform);
+  } catch (const tf2::TransformException & ex) {
+    resetLidarVelocityEstimator();
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Lidar velocity transform %s->%s unavailable: %s",
+      lidar_velocity_frame_.c_str(), target_frame_.c_str(), ex.what());
+  }
+}
+
+void UartToStm32::resetLidarVelocityEstimator()
+{
+  has_last_lidar_pose_ = false;
+  has_filtered_lidar_velocity_ = false;
+  last_lidar_pose_stamp_ns_ = 0;
+  filtered_lidar_vx_cmps_ = 0.0;
+  filtered_lidar_vy_cmps_ = 0.0;
+}
+
+void UartToStm32::processLidarVelocityTransform(
+  const geometry_msgs::msg::TransformStamped & transform)
+{
+  const int64_t stamp_ns =
+    static_cast<int64_t>(transform.header.stamp.sec) * 1000000000LL +
+    static_cast<int64_t>(transform.header.stamp.nanosec);
+  if (stamp_ns <= 0) {
+    resetLidarVelocityEstimator();
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Lidar velocity transform has a zero timestamp; measurement suppressed");
+    return;
+  }
+
+  const double pose_age_sec =
+    static_cast<double>(node_->now().nanoseconds() - stamp_ns) / 1e9;
+  if (pose_age_sec > lidar_velocity_pose_timeout_sec_ || pose_age_sec < -0.1) {
+    resetLidarVelocityEstimator();
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Lidar velocity pose is stale/invalid: age=%.3fs", pose_age_sec);
+    return;
+  }
+
+  if (has_last_lidar_pose_ && stamp_ns <= last_lidar_pose_stamp_ns_) {
+    return;
+  }
+
+  const double x_m = transform.transform.translation.x;
+  const double y_m = transform.transform.translation.y;
+  if (!std::isfinite(x_m) || !std::isfinite(y_m)) {
+    resetLidarVelocityEstimator();
+    return;
+  }
+
+  if (!has_last_lidar_pose_) {
+    has_last_lidar_pose_ = true;
+    last_lidar_pose_stamp_ns_ = stamp_ns;
+    last_lidar_x_m_ = x_m;
+    last_lidar_y_m_ = y_m;
+    return;
+  }
+
+  const double dt_sec = static_cast<double>(stamp_ns - last_lidar_pose_stamp_ns_) / 1e9;
+  if (dt_sec < lidar_velocity_min_dt_sec_) {
+    return;
+  }
+
+  if (dt_sec > lidar_velocity_max_dt_sec_) {
+    has_filtered_lidar_velocity_ = false;
+    last_lidar_pose_stamp_ns_ = stamp_ns;
+    last_lidar_x_m_ = x_m;
+    last_lidar_y_m_ = y_m;
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Lidar velocity sample gap %.3fs exceeds %.3fs; estimator reset",
+      dt_sec, lidar_velocity_max_dt_sec_);
+    return;
+  }
+
+  const double raw_vx_cmps = (x_m - last_lidar_x_m_) * 100.0 / dt_sec;
+  const double raw_vy_cmps = (y_m - last_lidar_y_m_) * 100.0 / dt_sec;
+  last_lidar_pose_stamp_ns_ = stamp_ns;
+  last_lidar_x_m_ = x_m;
+  last_lidar_y_m_ = y_m;
+
+  const double raw_speed_cmps = std::hypot(raw_vx_cmps, raw_vy_cmps);
+  if (!std::isfinite(raw_speed_cmps) || raw_speed_cmps > lidar_velocity_max_cmps_) {
+    has_filtered_lidar_velocity_ = false;
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 1000,
+      "Rejecting lidar velocity outlier: vx=%.1f vy=%.1f speed=%.1fcm/s",
+      raw_vx_cmps, raw_vy_cmps, raw_speed_cmps);
+    return;
+  }
+
+  if (!has_filtered_lidar_velocity_) {
+    filtered_lidar_vx_cmps_ = raw_vx_cmps;
+    filtered_lidar_vy_cmps_ = raw_vy_cmps;
+    has_filtered_lidar_velocity_ = true;
+  } else {
+    filtered_lidar_vx_cmps_ =
+      lidar_velocity_filter_alpha_ * raw_vx_cmps +
+      (1.0 - lidar_velocity_filter_alpha_) * filtered_lidar_vx_cmps_;
+    filtered_lidar_vy_cmps_ =
+      lidar_velocity_filter_alpha_ * raw_vy_cmps +
+      (1.0 - lidar_velocity_filter_alpha_) * filtered_lidar_vy_cmps_;
+  }
+
+  const double qx = transform.transform.rotation.x;
+  const double qy = transform.transform.rotation.y;
+  const double qz = transform.transform.rotation.z;
+  const double qw = transform.transform.rotation.w;
+  tf2::Quaternion q(qx, qy, qz, qw);
+  tf2::Matrix3x3 rotation(q);
+  double roll, pitch, yaw;
+  rotation.getRPY(roll, pitch, yaw);
+
+  const Eigen::Vector3d local_velocity(
+    filtered_lidar_vx_cmps_, filtered_lidar_vy_cmps_, 0.0);
+  const Eigen::Vector3d body_velocity = transformVelocity(local_velocity, yaw);
+  const float body_vx_cmps = static_cast<float>(body_velocity.x());
+  const float body_vy_cmps = static_cast<float>(body_velocity.y());
+
+  std_msgs::msg::Float32MultiArray velocity_msg;
+  velocity_msg.data = {body_vx_cmps, body_vy_cmps, 0.0F};
+  lidar_velocity_pub_->publish(velocity_msg);
+
+  if (sendLidarVelocityToSerial(body_vx_cmps, body_vy_cmps)) {
+    RCLCPP_DEBUG_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 1000,
+      "Lidar measured velocity: body(%.1f, %.1f)cm/s raw-local(%.1f, %.1f)cm/s",
+      body_vx_cmps, body_vy_cmps, raw_vx_cmps, raw_vy_cmps);
+  }
 }
 
 void UartToStm32::routeChoiceCallback(const std_msgs::msg::UInt8::SharedPtr msg)
@@ -325,14 +535,10 @@ void UartToStm32::sendTargetVelocityToSerial(
     const int16_t vel_yaw = static_cast<int16_t>(std::lround(vyaw_deg_per_s));
 
     std::vector<uint8_t> data(8);
-    data[0] = static_cast<uint8_t>(vel_x & 0xFF);
-    data[1] = static_cast<uint8_t>((vel_x >> 8) & 0xFF);
-    data[2] = static_cast<uint8_t>(vel_y & 0xFF);
-    data[3] = static_cast<uint8_t>((vel_y >> 8) & 0xFF);
-    data[4] = static_cast<uint8_t>(vel_z & 0xFF);
-    data[5] = static_cast<uint8_t>((vel_z >> 8) & 0xFF);
-    data[6] = static_cast<uint8_t>(vel_yaw & 0xFF);
-    data[7] = static_cast<uint8_t>((vel_yaw >> 8) & 0xFF);
+    writeInt16LittleEndian(data, 0, vel_x);
+    writeInt16LittleEndian(data, 2, vel_y);
+    writeInt16LittleEndian(data, 4, vel_z);
+    writeInt16LittleEndian(data, 6, vel_yaw);
 
     if (serial_comm_->send_protocol_data(TARGET_VELOCITY_FRAME_ID, static_cast<uint8_t>(data.size()), data)) {
       RCLCPP_DEBUG_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
@@ -345,6 +551,38 @@ void UartToStm32::sendTargetVelocityToSerial(
   } catch (const std::exception & e) {
     RCLCPP_ERROR(node_->get_logger(), "Exception in sendTargetVelocityToSerial: %s", e.what());
   }
+}
+
+bool UartToStm32::sendLidarVelocityToSerial(
+  float vx_cm_per_s, float vy_cm_per_s)
+{
+  if (!serial_comm_ || !serial_comm_->is_open()) {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 5000,
+      "Serial port is not open, cannot send lidar measured velocity");
+    return false;
+  }
+
+  const int16_t vel_x = static_cast<int16_t>(std::lround(vx_cm_per_s));
+  const int16_t vel_y = static_cast<int16_t>(std::lround(vy_cm_per_s));
+  std::vector<uint8_t> data(12, 0U);
+
+  // Legacy 0x32 layout: bytes 0..5 are unused tacc fields; bytes 6..11
+  // carry the body-frame measured velocity consumed by Set_m_speed_now().
+  writeInt16LittleEndian(data, 6, vel_x);
+  writeInt16LittleEndian(data, 8, vel_y);
+  writeInt16LittleEndian(data, 10, 0);
+
+  if (!serial_comm_->send_protocol_data(
+      LIDAR_VELOCITY_FRAME_ID, static_cast<uint8_t>(data.size()), data))
+  {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 5000,
+      "Failed to send lidar measured velocity: %s",
+      serial_comm_->get_last_error().c_str());
+    return false;
+  }
+  return true;
 }
 
 void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data)   

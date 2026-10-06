@@ -1,6 +1,6 @@
 /*==========================================================================
  * 描述    ：凌霄飞控外置传感器处理
- * 更新时间：2020-02-06 
+ * 更新时间：2020-02-06
  * 作者		 ：匿名科创-Jyoun
  * 官网    ：www.anotc.com
  * 淘宝    ：anotc.taobao.com
@@ -11,9 +11,9 @@
  * 若您觉得匿名有不好的地方，欢迎您拍砖提意见。
  * 若您觉得匿名好，请多多帮我们推荐，支持我们。
  * 匿名开源程序代码欢迎您的引用、延伸和拓展，不过在希望您在使用时能注明出处。
- * 君子坦荡荡，小人常戚戚，匿名坚决不会请水军、请喷子，也从未有过抹黑同行的行为。  
+ * 君子坦荡荡，小人常戚戚，匿名坚决不会请水军、请喷子，也从未有过抹黑同行的行为。
  * 开源不易，生活更不容易，希望大家互相尊重、互帮互助，共同进步。
- * 只有您的支持，匿名才能做得更好。  
+ * 只有您的支持，匿名才能做得更好。
 ===========================================================================*/
 #include "LX_FC_EXT_Sensor.h"
 #include "Drv_AnoOf.h"
@@ -21,23 +21,37 @@
 
 _fc_ext_sensor_st ext_sens;
 
-s16 speed_x_t=0,speed_y_t=0,speed_z_t=0,speed_cnt_t=0;
-u8 source_speed=1;//实时速度来源标志位，0为激光雷达，1为光流
+s16 speed_x_t=0,speed_y_t=0,speed_z_t=0;
+u16 speed_cnt_t=0;
+u8 source_speed=0;//实时速度来源标志位，0为激光雷达，1为光流
 char speed_sta_t=0;
+
+#define EXTERNAL_VELOCITY_TIMEOUT_MS 300U
+static u16 external_velocity_age_ms = EXTERNAL_VELOCITY_TIMEOUT_MS;
+static u8 external_velocity_seen = 0;
+static u8 external_velocity_timeout_latched = 1;
 
 /*     MY                            */
 void Set_m_speed_now(s16 x,s16 y,s16 z)
 {
-    if(x<60&&x>-60&&y<60&&y>-60&&z<60&&z>-60)
+    (void)z;
+    if(x<60&&x>-60&&y<60&&y>-60)
     {
         speed_x_t=x;
         speed_y_t=y;
         speed_z_t=0;
         speed_sta_t=1;
         speed_cnt_t++;
+        external_velocity_age_ms=0;
+        external_velocity_seen=1;
+        external_velocity_timeout_latched=0;
     }else
     {
         speed_sta_t=0;
+        speed_cnt_t++;
+        external_velocity_age_ms=EXTERNAL_VELOCITY_TIMEOUT_MS;
+        external_velocity_seen=1;
+        external_velocity_timeout_latched=1;
     }
 }
 
@@ -56,8 +70,23 @@ u8 Set_source_speed(s8 a)
 //这里把光流数据打包成通用速度传感器数据
 static inline void General_Velocity_Data_Handle()
 {
-    static u8 of_update_cnt;
+    static u8 last_of_update_cnt;
+    static u16 last_external_update_cnt;
     static u8 dT_ms = 0;
+
+    if(external_velocity_seen && !external_velocity_timeout_latched)
+    {
+        if(external_velocity_age_ms < EXTERNAL_VELOCITY_TIMEOUT_MS)
+        {
+            external_velocity_age_ms++;
+        }
+        if(external_velocity_age_ms >= EXTERNAL_VELOCITY_TIMEOUT_MS)
+        {
+            speed_sta_t=0;
+            speed_cnt_t++;
+            external_velocity_timeout_latched=1;
+        }
+    }
     //每一毫秒dT_ms+1，用来判断是否长时间无数据
     if (dT_ms != 255)
     {
@@ -72,9 +101,9 @@ static inline void General_Velocity_Data_Handle()
         
         if(source_speed==0)
         {
-            if(speed_cnt_t!=of_update_cnt)
+            if(speed_cnt_t!=last_external_update_cnt)
             {
-                of_update_cnt=speed_cnt_t;
+                last_external_update_cnt=speed_cnt_t;
                 if(speed_sta_t==1)
                 {
                     
@@ -95,9 +124,9 @@ static inline void General_Velocity_Data_Handle()
             }
         }else if(source_speed==1)
         {
-            if(of_update_cnt != ano_of.of_update_cnt)
+            if(last_of_update_cnt != ano_of.of_update_cnt)
             {
-                of_update_cnt=ano_of.of_update_cnt;
+                last_of_update_cnt=ano_of.of_update_cnt;
                 dT_ms=0;
                 if ( ano_of.work_sta) //光流有效
                 {

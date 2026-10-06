@@ -43,7 +43,6 @@ class PointToPointMission(Node):
         "GOTO_B",
         "HOLD_B",
         "DESCEND_B",
-        "LANDED_HOLD",
         "ABORT_HOLD",
         "FAULT_HOLD",
         "OBSTACLE_HOLD",
@@ -222,6 +221,10 @@ class PointToPointMission(Node):
         if self.state in self.ACTIVE_STATES:
             response.success = False
             response.message = f"任务已在运行，当前状态={self.state}"
+            return response
+        if self.state == "FC_LANDING":
+            response.success = False
+            response.message = "飞控正在执行一键降落；确认落地锁桨后再开始新任务"
             return response
         if not self._sensors_fresh():
             response.success = False
@@ -415,7 +418,15 @@ class PointToPointMission(Node):
                 self.active_target = self.b_target
                 self._enter_state("OBSTACLE_HOLD", "下方检测到障碍，返回巡航高度悬停")
             elif self._target_reached_stably():
-                self._enter_state("LANDED_HOLD", "达到近地目标高度，等待人工停止输出和锁桨")
+                # 外部位置闭环只负责下降到标定的近地交接高度。0x66 会让
+                # STM32 停止外部速度控制并可靠触发飞控原生 OneKey_Land，
+                # 由飞控完成最后下降和接地，避免在 landing_height_cm 悬停。
+                self.mission_complete_pub.publish(Empty())
+                self.active_target = None
+                self._enter_state(
+                    "FC_LANDING",
+                    "已到近地交接高度，飞控接管并持续执行一键降落直至地面",
+                )
 
 
 def main(args=None) -> None:
